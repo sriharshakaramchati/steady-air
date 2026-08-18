@@ -54,7 +54,7 @@
   .status .sub{margin-top:8px;font-size:16px;line-height:1.45;color:var(--muted);min-height:46px}
 
   /* live g readout */
-  .g-live{display:flex;align-items:baseline;gap:10px}
+  .g-live{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
   .g-live .num{
     font-size:64px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;
   }
@@ -63,10 +63,12 @@
   /* the limit scale: signature element */
   .scale{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 16px 12px}
   .scale h2{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
-  .rail{position:relative;height:10px;border-radius:5px;margin:26px 6px 6px;
+  .rail{position:relative;height:10px;border-radius:5px;margin:40px 6px 6px;
     background:linear-gradient(90deg,#1d3a30 0%,#1d3a30 38%,#3a3423 62%,#3a3423 100%);}
   .tick{position:absolute;top:-22px;transform:translateX(-50%);font-size:10px;color:var(--muted);white-space:nowrap}
-  .tick.edge-right{transform:translateX(-92%)}
+  /* the two right-hand labels are too long to share a line on a phone;
+     the edge one sits a row higher so nothing overlaps down to 320px */
+  .tick.edge-right{top:-36px;transform:translateX(-92%)}
   .tickline{position:absolute;top:-6px;bottom:-6px;width:1px;background:var(--line);transform:translateX(-50%)}
   .marker{position:absolute;top:50%;width:18px;height:18px;border-radius:50%;
     background:var(--calm);border:3px solid var(--night);
@@ -95,6 +97,7 @@
   button{
     appearance:none;border:0;border-radius:12px;padding:16px;
     font-size:17px;font-weight:700;cursor:pointer;width:100%;
+    min-height:44px;               /* floor for the tap target; padding already gives 52px */
     background:var(--calm);color:#06251a;
   }
   button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line);font-weight:600}
@@ -184,6 +187,27 @@
   var modeTag = document.getElementById('mode-tag');
   var canvas = document.getElementById('chart');
   var ctx = canvas.getContext('2d');
+  var cssW = 0, cssH = 0;     // canvas size in CSS px; drawing happens in this space
+  var dprCur = 1;
+
+  // Match the backing store to the real box times the device pixel ratio, then
+  // scale the context so all drawing below is in CSS pixels. Without this the
+  // fixed 800x220 buffer gets stretched non-uniformly by CSS and looks soft.
+  function sizeCanvas(){
+    var rect = canvas.getBoundingClientRect();
+    if (!rect.width) return false;            // still inside the hidden live view
+    var dpr = window.devicePixelRatio || 1;
+    dprCur = dpr;
+    cssW = rect.width; cssH = rect.height;
+    var bw = Math.round(cssW * dpr), bh = Math.round(cssH * dpr);
+    if (canvas.width !== bw || canvas.height !== bh){
+      canvas.width = bw; canvas.height = bh; // this also resets the transform
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return true;
+  }
+  window.addEventListener('resize', sizeCanvas);
+  window.addEventListener('orientationchange', sizeCanvas);
 
   var G = 9.80665;
   var smoothG = 1.0;          // low-pass filtered g
@@ -250,20 +274,23 @@
   }
 
   function drawTrace(now){
-    var w = canvas.width, h = canvas.height;
+    if (!cssW && !sizeCanvas()) return;
+    var w = cssW, h = cssH;
     ctx.clearRect(0,0,w,h);
     // guides at 0.5g, 1g, 1.5g  (y maps 0.4g..1.6g)
     var gMin = 0.4, gMax = 1.6;
     function y(g){ g = Math.max(gMin, Math.min(gMax, g)); return h - ((g - gMin)/(gMax - gMin)) * h; }
-    ctx.strokeStyle = '#22304a'; ctx.lineWidth = 1;
+    // hairlines: one device pixel wide, centred on the device grid so they stay sharp
+    ctx.strokeStyle = '#22304a'; ctx.lineWidth = 1 / dprCur;
     [0.5,1.0,1.5].forEach(function(g){
-      ctx.beginPath(); ctx.moveTo(0, y(g)); ctx.lineTo(w, y(g)); ctx.stroke();
+      var gy = (Math.round(y(g) * dprCur) + 0.5) / dprCur;
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
     });
-    ctx.fillStyle = '#8a97a8'; ctx.font = '20px sans-serif';
-    ctx.fillText('1g', 8, y(1.0) - 6);
+    ctx.fillStyle = '#8a97a8'; ctx.font = '10px sans-serif';
+    ctx.fillText('1g', 4, y(1.0) - 3);
 
     if (samples.length < 2) return;
-    ctx.strokeStyle = '#7fb4ff'; ctx.lineWidth = 3; ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#7fb4ff'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
     ctx.beginPath();
     for (var i=0;i<samples.length;i++){
       var x = w - ((now - samples[i].t) / 60000) * w;
@@ -283,6 +310,7 @@
   function begin(tag){
     gate.classList.add('hidden');
     live.classList.remove('hidden');
+    sizeCanvas();               // the box only has a measurable width once visible
     modeTag.textContent = tag;
     startTime = performance.now();
     running = true;
