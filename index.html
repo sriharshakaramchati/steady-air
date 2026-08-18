@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Steady Air">
+<title>Steady Air</title>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('sw.js');
+    });
+  }
+</script>
+<style>
+  :root{
+    --night:#0b1220;
+    --panel:#111a2b;
+    --line:#22304a;
+    --text:#e9eef5;
+    --muted:#8a97a8;
+    --calm:#5bd6a0;
+    --watch:#f2b662;
+    --trace:#7fb4ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;touch-action:manipulation}
+  body{
+    -webkit-user-select:none;user-select:none;
+    background:var(--night);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    padding:max(20px,env(safe-area-inset-top)) 20px max(20px,env(safe-area-inset-bottom));
+  }
+  .wrap{width:100%;max-width:430px;display:flex;flex-direction:column;gap:18px}
+
+  header{display:flex;align-items:baseline;justify-content:space-between}
+  header h1{font-size:15px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  header span{font-size:12px;color:var(--muted)}
+
+  /* status block */
+  .status{padding:8px 0 0}
+  .status .word{
+    font-size:52px;font-weight:800;letter-spacing:-0.02em;line-height:1.05;
+    color:var(--calm);transition:color .6s ease;
+  }
+  .status .word.watch{color:var(--watch)}
+  .status .sub{margin-top:8px;font-size:16px;line-height:1.45;color:var(--muted);min-height:46px}
+
+  /* live g readout */
+  .g-live{display:flex;align-items:baseline;gap:10px}
+  .g-live .num{
+    font-size:64px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;
+  }
+  .g-live .unit{font-size:18px;color:var(--muted);font-weight:600}
+
+  /* the limit scale: signature element */
+  .scale{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 16px 12px}
+  .scale h2{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+  .rail{position:relative;height:10px;border-radius:5px;margin:26px 6px 6px;
+    background:linear-gradient(90deg,#1d3a30 0%,#1d3a30 38%,#3a3423 62%,#3a3423 100%);}
+  .tick{position:absolute;top:-22px;transform:translateX(-50%);font-size:10px;color:var(--muted);white-space:nowrap}
+  .tick.edge-right{transform:translateX(-92%)}
+  .tickline{position:absolute;top:-6px;bottom:-6px;width:1px;background:var(--line);transform:translateX(-50%)}
+  .marker{position:absolute;top:50%;width:18px;height:18px;border-radius:50%;
+    background:var(--calm);border:3px solid var(--night);
+    transform:translate(-50%,-50%);transition:left .25s linear, background-color .6s ease;
+    box-shadow:0 0 0 2px rgba(91,214,160,.35)}
+  .marker.watch{background:var(--watch);box-shadow:0 0 0 2px rgba(242,182,98,.35)}
+  .rail-labels{display:flex;justify-content:space-between;margin:22px 6px 0;font-size:11px;color:var(--muted)}
+  .scale .note{margin-top:12px;font-size:13px;line-height:1.5;color:var(--muted)}
+  .scale .note b{color:var(--text);font-weight:600}
+
+  /* trace */
+  .trace{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .trace h2{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+  canvas{width:100%;height:110px;display:block}
+
+  /* session stats */
+  .stats{display:flex;gap:12px}
+  .stat{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .stat .label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .stat .value{margin-top:6px;font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+  .stat .desc{margin-top:2px;font-size:12px;color:var(--muted)}
+
+  /* start screen */
+  .gate{display:flex;flex-direction:column;gap:14px;padding-top:4px}
+  .gate p{font-size:15px;line-height:1.55;color:var(--muted)}
+  button{
+    appearance:none;border:0;border-radius:12px;padding:16px;
+    font-size:17px;font-weight:700;cursor:pointer;width:100%;
+    background:var(--calm);color:#06251a;
+  }
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line);font-weight:600}
+  button:focus-visible{outline:3px solid var(--trace);outline-offset:2px}
+  .hidden{display:none}
+  .foot{font-size:12px;color:var(--muted);text-align:center;line-height:1.5}
+  @media (prefers-reduced-motion: reduce){
+    .marker{transition:none}
+    .status .word{transition:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Steady Air</h1>
+    <span id="mode-tag"></span>
+  </header>
+
+  <!-- start gate -->
+  <div class="gate" id="gate">
+    <p>This uses your phone's motion sensor to measure the bumps you feel and show how small they really are compared to what the aircraft is built to handle. Everything runs on the phone. Works in airplane mode.</p>
+    <button id="btn-start">Start measuring</button>
+    <button class="ghost" id="btn-demo">Try demo mode (no sensors)</button>
+  </div>
+
+  <!-- live view -->
+  <div id="live" class="hidden" style="display:flex;flex-direction:column;gap:18px">
+    <div class="status">
+      <div class="word" id="status-word">Smooth</div>
+      <div class="sub" id="status-sub">Nothing out of the ordinary. The aircraft is doing exactly what it should.</div>
+    </div>
+
+    <div class="g-live">
+      <div class="num" id="g-num">1.00</div>
+      <div class="unit">g right now</div>
+    </div>
+
+    <div class="scale">
+      <h2>Where you are vs what the plane can take</h2>
+      <div class="rail" id="rail">
+        <div class="tickline" style="left:25%"></div>
+        <div class="tick" style="left:25%">normal flight 1g</div>
+        <div class="tickline" style="left:62.5%"></div>
+        <div class="tick" style="left:62.5%">certified limit 2.5g</div>
+        <div class="tickline" style="left:93.75%"></div>
+        <div class="tick edge-right" style="left:93.75%">tested to 3.75g</div>
+        <div class="marker" id="marker" style="left:25%"></div>
+      </div>
+      <div class="rail-labels"><span>0g</span><span>4g</span></div>
+      <div class="note">Even severe turbulence rarely pushes past <b>1.5g</b>. Airliners are certified to <b>2.5g</b> and the wings are tested to <b>1.5x beyond that</b> without failing.</div>
+    </div>
+
+    <div class="trace">
+      <h2>Last 60 seconds</h2>
+      <canvas id="chart" width="800" height="220"></canvas>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="label">Worst bump</div>
+        <div class="value" id="max-g">1.00g</div>
+        <div class="desc" id="max-desc">smooth</div>
+      </div>
+      <div class="stat">
+        <div class="label">Time measured</div>
+        <div class="value" id="elapsed">0:00</div>
+        <div class="desc">this session</div>
+      </div>
+    </div>
+
+    <div class="foot">Bumps feel bigger than they measure. That gap between feeling and number is the whole point of this screen.</div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var gate = document.getElementById('gate');
+  var live = document.getElementById('live');
+  var statusWord = document.getElementById('status-word');
+  var statusSub = document.getElementById('status-sub');
+  var gNum = document.getElementById('g-num');
+  var marker = document.getElementById('marker');
+  var maxGEl = document.getElementById('max-g');
+  var maxDescEl = document.getElementById('max-desc');
+  var elapsedEl = document.getElementById('elapsed');
+  var modeTag = document.getElementById('mode-tag');
+  var canvas = document.getElementById('chart');
+  var ctx = canvas.getContext('2d');
+
+  var G = 9.80665;
+  var smoothG = 1.0;          // low-pass filtered g
+  var maxG = 1.0;
+  var samples = [];           // {t, g} last 60s
+  var startTime = null;
+  var demoMode = false;
+  var running = false;
+
+  var LEVELS = [
+    {limit:0.07, word:'Smooth', cls:'', sub:'Nothing out of the ordinary. The aircraft is doing exactly what it should.', desc:'smooth'},
+    {limit:0.18, word:'Light bumps', cls:'', sub:'This is light chop. Pilots fly through this all day without a second thought.', desc:'light chop'},
+    {limit:0.45, word:'Moderate bumps', cls:'watch', sub:'Feels rough, measures small. You are nowhere near what this aircraft handles by design.', desc:'moderate'},
+    {limit:99,   word:'Strong bumps', cls:'watch', sub:'Uncomfortable, not dangerous. Look at the scale below. The limit is still far away.', desc:'strong'}
+  ];
+
+  function levelFor(dev){
+    for (var i=0;i<LEVELS.length;i++){ if (dev < LEVELS[i].limit) return LEVELS[i]; }
+    return LEVELS[LEVELS.length-1];
+  }
+
+  function onSample(gVal, now){
+    // low-pass for the displayed number, keep raw for trace
+    smoothG += (gVal - smoothG) * 0.25;
+    samples.push({t: now, g: gVal});
+    while (samples.length && now - samples[0].t > 60000) samples.shift();
+    if (gVal > maxG) maxG = gVal;
+  }
+
+  function recentPeakDeviation(now){
+    var peak = 0;
+    for (var i = samples.length - 1; i >= 0; i--){
+      if (now - samples[i].t > 3000) break;
+      var d = Math.abs(samples[i].g - 1);
+      if (d > peak) peak = d;
+    }
+    return peak;
+  }
+
+  function render(){
+    if (!running) return;
+    var now = performance.now();
+
+    gNum.textContent = smoothG.toFixed(2);
+    var pct = Math.max(0, Math.min(100, (smoothG / 4) * 100));
+    marker.style.left = pct + '%';
+
+    var lvl = levelFor(recentPeakDeviation(now));
+    statusWord.textContent = lvl.word;
+    statusSub.textContent = lvl.sub;
+    statusWord.className = 'word ' + lvl.cls;
+    marker.className = 'marker ' + lvl.cls;
+
+    maxGEl.textContent = maxG.toFixed(2) + 'g';
+    maxDescEl.textContent = levelFor(Math.abs(maxG - 1)).desc;
+
+    if (startTime !== null){
+      var s = Math.floor((now - startTime)/1000);
+      elapsedEl.textContent = Math.floor(s/60) + ':' + ('0' + (s%60)).slice(-2);
+    }
+
+    drawTrace(now);
+    requestAnimationFrame(render);
+  }
+
+  function drawTrace(now){
+    var w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+    // guides at 0.5g, 1g, 1.5g  (y maps 0.4g..1.6g)
+    var gMin = 0.4, gMax = 1.6;
+    function y(g){ g = Math.max(gMin, Math.min(gMax, g)); return h - ((g - gMin)/(gMax - gMin)) * h; }
+    ctx.strokeStyle = '#22304a'; ctx.lineWidth = 1;
+    [0.5,1.0,1.5].forEach(function(g){
+      ctx.beginPath(); ctx.moveTo(0, y(g)); ctx.lineTo(w, y(g)); ctx.stroke();
+    });
+    ctx.fillStyle = '#8a97a8'; ctx.font = '20px sans-serif';
+    ctx.fillText('1g', 8, y(1.0) - 6);
+
+    if (samples.length < 2) return;
+    ctx.strokeStyle = '#7fb4ff'; ctx.lineWidth = 3; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (var i=0;i<samples.length;i++){
+      var x = w - ((now - samples[i].t) / 60000) * w;
+      var yy = y(samples[i].g);
+      if (i === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+
+  function handleMotion(e){
+    var a = e.accelerationIncludingGravity;
+    if (!a || a.x === null) return;
+    var mag = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z) / G;
+    onSample(mag, performance.now());
+  }
+
+  function begin(tag){
+    gate.classList.add('hidden');
+    live.classList.remove('hidden');
+    modeTag.textContent = tag;
+    startTime = performance.now();
+    running = true;
+    requestAnimationFrame(render);
+  }
+
+  document.getElementById('btn-start').addEventListener('click', function(){
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function'){
+      DeviceMotionEvent.requestPermission().then(function(state){
+        if (state === 'granted'){
+          window.addEventListener('devicemotion', handleMotion);
+          begin('live sensor');
+        } else {
+          alert('Motion access was blocked. You can still use demo mode.');
+        }
+      }).catch(function(){
+        alert('Motion sensors are not available here. Try opening this file directly in Safari or Chrome, or use demo mode.');
+      });
+    } else if (typeof DeviceMotionEvent !== 'undefined'){
+      window.addEventListener('devicemotion', handleMotion);
+      begin('live sensor');
+    } else {
+      alert('No motion sensor found. Use demo mode instead.');
+    }
+  });
+
+  document.getElementById('btn-demo').addEventListener('click', function(){
+    demoMode = true;
+    begin('demo');
+    var phase = 0;
+    setInterval(function(){
+      phase += 0.08;
+      // calm baseline with occasional simulated bumps
+      var bump = 0;
+      var cycle = (performance.now()/1000) % 24;
+      if (cycle > 14 && cycle < 19){
+        bump = Math.sin(phase*7) * 0.22 * Math.random();
+      }
+      var g = 1 + Math.sin(phase)*0.015 + (Math.random()-0.5)*0.02 + bump;
+      onSample(g, performance.now());
+    }, 60);
+  });
+})();
+</script>
+</body>
+</html>
