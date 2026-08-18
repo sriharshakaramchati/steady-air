@@ -1,4 +1,4 @@
-const CACHE = 'steady-air-v2';
+const CACHE = 'steady-air-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -8,7 +8,15 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
+  // { cache: 'reload' } bypasses the browser's HTTP cache. Without it a new
+  // worker can re-cache the *previous* build straight out of the HTTP cache
+  // (GitHub Pages serves HTML with a max-age), so a shipped fix would never
+  // reach anyone who had already opened the app.
+  e.waitUntil(
+    caches.open(CACHE).then((c) =>
+      c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))
+    )
+  );
   self.skipWaiting();
 });
 
