@@ -59,6 +59,10 @@
     font-size:64px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;
   }
   .g-live .unit{font-size:18px;color:var(--muted);font-weight:600}
+  /* verdict line: the one sentence that has to land mid-bump, without the
+     user having to read a chart. Same size as the "g right now" unit text. */
+  .verdict{margin-top:8px;font-size:18px;font-weight:600;line-height:1.4;color:var(--watch)}
+  .verdict.calm{color:var(--calm)}
 
   /* the limit scale: signature element */
   .scale{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 16px 12px}
@@ -82,12 +86,19 @@
   /* trace */
   .trace{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
   .trace h2{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
-  canvas{width:100%;height:110px;display:block}
+  .trace h2 span{float:right;letter-spacing:.04em;text-transform:none;font-weight:500;opacity:.75}
+  /* touch-action:none so a drag across the chart inspects it instead of
+     scrolling the page under the finger */
+  canvas{width:100%;height:110px;display:block;touch-action:none}
+  .trace .safe{margin-top:10px;font-size:12px;line-height:1.45;color:var(--muted)}
 
   /* session stats */
-  .stats{display:flex;gap:12px}
-  .stat{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
-  .stat .label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  /* three cards side by side at 360px, wrapping to two rows only if the
+     viewport is narrower than they can honestly share */
+  .stats{display:flex;flex-wrap:wrap;gap:12px}
+  .stat{flex:1 1 92px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+  /* min-height keeps the three values on one baseline when a label wraps */
+  .stat .label{font-size:11px;line-height:1.2;min-height:2.4em;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
   .stat .value{margin-top:6px;font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
   .stat .desc{margin-top:2px;font-size:12px;color:var(--muted)}
 
@@ -104,6 +115,14 @@
   button:focus-visible{outline:3px solid var(--trace);outline-offset:2px}
   .hidden{display:none}
   .foot{font-size:12px;color:var(--muted);text-align:center;line-height:1.5}
+  /* phone widths: tighten the stat cards so all three still fit one row */
+  @media (max-width:400px){
+    .stats{gap:8px}
+    .stat{padding:12px 10px}
+    .stat .label{font-size:10px}
+    .stat .value{font-size:19px}
+    .stat .desc{font-size:11px;line-height:1.35}
+  }
   @media (prefers-reduced-motion: reduce){
     .marker{transition:none}
     .status .word{transition:none}
@@ -131,9 +150,12 @@
       <div class="sub" id="status-sub">Nothing out of the ordinary. The aircraft is doing exactly what it should.</div>
     </div>
 
-    <div class="g-live">
-      <div class="num" id="g-num">1.00</div>
-      <div class="unit">g right now</div>
+    <div>
+      <div class="g-live">
+        <div class="num" id="g-num">1.00</div>
+        <div class="unit">g right now</div>
+      </div>
+      <div class="verdict calm" id="verdict">Well within limits. Barely registering.</div>
     </div>
 
     <div class="scale">
@@ -152,8 +174,9 @@
     </div>
 
     <div class="trace">
-      <h2>Last 60 seconds</h2>
+      <h2>Last 60 seconds<span>tap to inspect</span></h2>
       <canvas id="chart" width="800" height="220"></canvas>
+      <div class="safe">This whole window is safe range. If you can see the line, you're fine.</div>
     </div>
 
     <div class="stats">
@@ -161,6 +184,11 @@
         <div class="label">Worst bump</div>
         <div class="value" id="max-g">1.00g</div>
         <div class="desc" id="max-desc">smooth</div>
+      </div>
+      <div class="stat">
+        <div class="label">Softest dip</div>
+        <div class="value" id="min-g">1.00g</div>
+        <div class="desc">dips below 1g are normal on descent</div>
       </div>
       <div class="stat">
         <div class="label">Time measured</div>
@@ -181,8 +209,10 @@
   var statusSub = document.getElementById('status-sub');
   var gNum = document.getElementById('g-num');
   var marker = document.getElementById('marker');
+  var verdictEl = document.getElementById('verdict');
   var maxGEl = document.getElementById('max-g');
   var maxDescEl = document.getElementById('max-desc');
+  var minGEl = document.getElementById('min-g');
   var elapsedEl = document.getElementById('elapsed');
   var modeTag = document.getElementById('mode-tag');
   var canvas = document.getElementById('chart');
@@ -212,7 +242,20 @@
   var G = 9.80665;
   var smoothG = 1.0;          // low-pass filtered g
   var maxG = 1.0;
+  var minG = 1.0;
   var samples = [];           // {t, g} last 60s
+
+  var TRACE_MIN = 0.4, TRACE_MAX = 1.6;   // the chart's y window
+  var CALM_LO = 0.9, CALM_HI = 1.1;       // the band ordinary flight lives in
+
+  var FONT = '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif';
+  var AXIS_FONT = '600 11px ' + FONT;     // 11px so the axis reads on a phone
+  var BAND_FONT = '600 10px ' + FONT;
+  var PICK_FONT = '700 12px ' + FONT;
+
+  var inspect = null;         // {t,g} the sample the finger picked
+  var inspectHideAt = 0;      // 0 while the finger is still down
+  var offScale = null;        // {t,g,until} a reading the chart had to clamp
   var startTime = null;
   var demoMode = false;
   var running = false;
@@ -223,6 +266,18 @@
     {limit:0.45, word:'Moderate bumps', cls:'watch', sub:'Feels rough, measures small. You are nowhere near what this aircraft handles by design.', desc:'moderate'},
     {limit:99,   word:'Strong bumps', cls:'watch', sub:'Uncomfortable, not dangerous. Look at the scale below. The limit is still far away.', desc:'strong'}
   ];
+
+  // The verdict line. Never empty: at a glance, mid-bump, this is the only
+  // thing the user has to read. Amber at worst, never red.
+  function verdictFor(dev){
+    if (dev < 0.15) return {text:'Well within limits. Barely registering.', calm:true};
+    if (dev <= 0.45){
+      var n = Math.min(9.9, (2.5 - 1) / Math.max(dev, 0.01));
+      return {text:'Well within limits. The plane is built for ' + n.toFixed(1) +
+                   'x more than this.', calm:false};
+    }
+    return {text:'Still within limits. Certified ceiling is far above this.', calm:false};
+  }
 
   function levelFor(dev){
     for (var i=0;i<LEVELS.length;i++){ if (dev < LEVELS[i].limit) return LEVELS[i]; }
@@ -235,7 +290,59 @@
     samples.push({t: now, g: gVal});
     while (samples.length && now - samples[0].t > 60000) samples.shift();
     if (gVal > maxG) maxG = gVal;
+    if (gVal < minG) minG = gVal;
+
+    // The trace clamps anything outside 0.4..1.6 onto its edge, so flash the
+    // true figure in the readout for a moment. The line may flatten; the
+    // number never lies.
+    if (gVal > TRACE_MAX || gVal < TRACE_MIN){
+      if (!offScale || now > offScale.until ||
+          Math.abs(gVal - 1) > Math.abs(offScale.g - 1)){
+        offScale = {t: now, g: gVal, until: now + 2500};
+      } else {
+        offScale.until = now + 2500;
+      }
+    }
   }
+
+  // Tap or drag anywhere on the chart to read one moment out of it. Touch is
+  // the input that matters here; preventDefault stops the page scrolling under
+  // the finger mid-drag.
+  function pickAt(clientX){
+    if (!samples.length) return;
+    var rect = canvas.getBoundingClientRect();
+    if (!rect.width) return;
+    var x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    var target = performance.now() - (1 - x / rect.width) * 60000;
+    var best = samples[0], bestD = Math.abs(best.t - target);
+    for (var i = 1; i < samples.length; i++){
+      var d = Math.abs(samples[i].t - target);
+      if (d < bestD){ bestD = d; best = samples[i]; }
+    }
+    inspect = {t: best.t, g: best.g};
+    inspectHideAt = 0;          // held open while the finger is down
+  }
+
+  function releaseInspect(){
+    // linger a second after release so the number is readable, then fade out
+    if (inspect) inspectHideAt = performance.now() + 1000;
+  }
+
+  canvas.addEventListener('touchstart', function(e){
+    e.preventDefault(); pickAt(e.touches[0].clientX);
+  }, {passive:false});
+  canvas.addEventListener('touchmove', function(e){
+    e.preventDefault(); pickAt(e.touches[0].clientX);
+  }, {passive:false});
+  canvas.addEventListener('touchend', releaseInspect);
+  canvas.addEventListener('touchcancel', releaseInspect);
+
+  var mouseDown = false;
+  canvas.addEventListener('mousedown', function(e){ mouseDown = true; pickAt(e.clientX); });
+  canvas.addEventListener('mousemove', function(e){ if (mouseDown) pickAt(e.clientX); });
+  window.addEventListener('mouseup', function(){
+    if (mouseDown){ mouseDown = false; releaseInspect(); }
+  });
 
   function recentPeakDeviation(now){
     var peak = 0;
@@ -261,8 +368,13 @@
     statusWord.className = 'word ' + lvl.cls;
     marker.className = 'marker ' + lvl.cls;
 
+    var v = verdictFor(Math.abs(smoothG - 1));
+    if (verdictEl.textContent !== v.text) verdictEl.textContent = v.text;
+    verdictEl.className = 'verdict' + (v.calm ? ' calm' : '');
+
     maxGEl.textContent = maxG.toFixed(2) + 'g';
     maxDescEl.textContent = levelFor(Math.abs(maxG - 1)).desc;
+    minGEl.textContent = minG.toFixed(2) + 'g';
 
     if (startTime !== null){
       var s = Math.floor((now - startTime)/1000);
@@ -277,27 +389,101 @@
     if (!cssW && !sizeCanvas()) return;
     var w = cssW, h = cssH;
     ctx.clearRect(0,0,w,h);
-    // guides at 0.5g, 1g, 1.5g  (y maps 0.4g..1.6g)
-    var gMin = 0.4, gMax = 1.6;
+    // y maps 0.4g..1.6g; anything beyond that gets clamped onto the edge
+    var gMin = TRACE_MIN, gMax = TRACE_MAX;
     function y(g){ g = Math.max(gMin, Math.min(gMax, g)); return h - ((g - gMin)/(gMax - gMin)) * h; }
+
+    // calm band: 0.9g..1.1g, so ordinary flight visibly sits inside a calm zone
+    var bandTop = y(CALM_HI), bandBot = y(CALM_LO);
+    ctx.fillStyle = 'rgba(91,214,160,.08)';
+    ctx.fillRect(0, bandTop, w, bandBot - bandTop);
+
     // hairlines: one device pixel wide, centred on the device grid so they stay sharp
     ctx.strokeStyle = '#22304a'; ctx.lineWidth = 1 / dprCur;
     [0.5,1.0,1.5].forEach(function(g){
       var gy = (Math.round(y(g) * dprCur) + 0.5) / dprCur;
       ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
     });
-    ctx.fillStyle = '#8a97a8'; ctx.font = '10px sans-serif';
-    ctx.fillText('1g', 4, y(1.0) - 3);
 
-    if (samples.length < 2) return;
-    ctx.strokeStyle = '#7fb4ff'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
-    ctx.beginPath();
-    for (var i=0;i<samples.length;i++){
-      var x = w - ((now - samples[i].t) / 60000) * w;
-      var yy = y(samples[i].g);
-      if (i === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    if (samples.length > 1){
+      ctx.strokeStyle = '#7fb4ff'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      for (var i=0;i<samples.length;i++){
+        var x = w - ((now - samples[i].t) / 60000) * w;
+        var yy = y(samples[i].g);
+        if (i === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
+
+    // Labels go on last, over a scrap of the panel colour, so the trace can
+    // cross a gridline without eating its label.
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.font = AXIS_FONT;
+    [[0.5,'0.5g'],[1.0,'1g'],[1.5,'1.5g']].forEach(function(pair){
+      var ly = Math.max(11, Math.min(h - 2, y(pair[0]) - 3));
+      var tw = ctx.measureText(pair[1]).width;
+      ctx.fillStyle = 'rgba(17,26,43,.8)';
+      ctx.fillRect(2, ly - 10, tw + 4, 12);
+      ctx.fillStyle = '#8a97a8';
+      ctx.fillText(pair[1], 4, ly);
+    });
+    ctx.textAlign = 'right';
+    ctx.font = BAND_FONT;
+    var cw = ctx.measureText('calm').width;
+    var cy = Math.min(h - 2, bandBot + 10);   // just below the band, clear of the 1g line
+    ctx.fillStyle = 'rgba(17,26,43,.8)';
+    ctx.fillRect(w - 6 - cw, cy - 9, cw + 4, 11);
+    ctx.fillStyle = 'rgba(91,214,160,.7)';
+    ctx.fillText('calm', w - 4, cy);
+
+    // The picked moment, or the auto-flash when a reading went off scale.
+    var pick = inspect, off = false;
+    if (pick && inspectHideAt && now > inspectHideAt){ inspect = null; pick = null; }
+    if (!pick && offScale){
+      if (now > offScale.until) offScale = null;
+      else { pick = offScale; off = true; }
+    }
+    if (pick){
+      var px = w - ((now - pick.t) / 60000) * w;
+      if (px >= 0 && px <= w) drawPick(px, pick, off, now, w, h, y);
+      else inspect = null;              // it has scrolled out of the window
+    }
+  }
+
+  function roundRect(x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  // crosshair plus a small readout: the true g at that moment and how long ago
+  function drawPick(px, pick, off, now, w, h, y){
+    var secs = Math.max(0, Math.round((now - pick.t) / 1000));
+    var label = pick.g.toFixed(2) + 'g, ' + secs + 's ago';
+    var py = y(pick.g);                 // clamped for the dot, not for the number
+
+    ctx.strokeStyle = 'rgba(233,238,245,.3)'; ctx.lineWidth = 1 / dprCur;
+    var cx = (Math.round(px * dprCur) + 0.5) / dprCur;
+    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke();
+
+    ctx.fillStyle = off ? '#f2b662' : '#7fb4ff';
+    ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI*2); ctx.fill();
+
+    ctx.font = PICK_FONT; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    var bw = ctx.measureText(label).width + 14, bh = 20;
+    var bx = Math.max(1, Math.min(w - bw - 1, px - bw/2));
+    var by = py - bh - 8;
+    if (by < 1) by = Math.min(h - bh - 1, py + 8);   // clamped at the top edge
+    roundRect(bx, by, bw, bh, 5);
+    ctx.fillStyle = 'rgba(11,18,32,.93)'; ctx.fill();
+    ctx.strokeStyle = off ? '#f2b662' : '#22304a'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = off ? '#f2b662' : '#e9eef5';
+    ctx.fillText(label, bx + 7, by + bh/2 + 0.5);
   }
 
   function handleMotion(e){

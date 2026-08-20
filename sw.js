@@ -1,4 +1,4 @@
-const CACHE = 'steady-air-v3';
+const CACHE = 'steady-air-v4';
 const ASSETS = [
   './',
   './index.html',
